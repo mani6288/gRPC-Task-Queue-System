@@ -1,0 +1,38 @@
+syntax = "proto3";
+
+package taskqueue;
+
+message Task {
+  string id = 1;
+  string user_id = 2;
+  enum Tier {
+    FREE = 0;
+    PAID = 1;
+  }
+  Tier tier = 3;
+  int32 expected_ms = 4;
+  int64 enqueued_at_unix = 5;
+}
+
+message EnqueueReply {
+  bool ok = 1;
+  string msg = 2;
+}
+
+message Empty {}
+
+message AgentInfo {
+  string agent_id = 1;
+}
+
+message TaskDone {
+  string task_id = 1;
+  string agent_id = 2;
+  string notes = 3;
+}
+
+service Distributor {
+  rpc Enqueue(Task) returns (EnqueueReply);
+  rpc RequestTask(AgentInfo) returns (Task);
+  rpc ReportDone(TaskDone) returns (Empty);
+}
