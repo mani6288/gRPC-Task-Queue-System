@@ -3,12 +3,16 @@ import time
 import heapq
 import threading
 from concurrent import futures
+from typing import Optional
 import grpc
 import taskqueue_pb2 as pb
 import taskqueue_pb2_grpc as pb_grpc
 
 
 class PriorityQueue:
+    # Stronger aging: every second of waiting reduces the effective expected_ms by this many ms.
+    _AGING_MS_PER_SEC = 25.0
+
     def __init__(self):
         self._heap = []
         self._lock = threading.Lock()
@@ -17,17 +21,37 @@ class PriorityQueue:
     def _tier_rank(self, tier):
         return 0 if tier == pb.Task.PAID else 1
 
+    def _priority_key(self, task: pb.Task, counter: int, now: Optional[float] = None):
+        if now is None:
+            now = time.time()
+        enqueued_at = task.enqueued_at_unix or int(now)
+        wait_seconds = max(0.0, now - enqueued_at)
+        aged_expected = max(0.0, task.expected_ms - wait_seconds * self._AGING_MS_PER_SEC)
+        return (self._tier_rank(task.tier), aged_expected, enqueued_at, counter)
+
     def push(self, task: pb.Task):
         with self._lock:
             self._counter += 1
-            key = (self._tier_rank(task.tier), task.expected_ms, task.enqueued_at_unix, self._counter)
-            heapq.heappush(self._heap, (key, task))
+            # key = (self._tier_rank(task.tier), task.expected_ms, task.enqueued_at_unix, self._counter)
+            # heapq.heappush(self._heap, (key, task))
+            counter = self._counter
+            now = time.time()
+            key = self._priority_key(task, counter, now)
+            heapq.heappush(self._heap, (key, counter, task))
 
     def pop(self):
         with self._lock:
             if not self._heap:
                 return None
-            _, task = heapq.heappop(self._heap)
+            # _, task = heapq.heappop(self._heap)
+            now = time.time()
+            refreshed = [
+                (self._priority_key(task, counter, now), counter, task)
+                for _, counter, task in self._heap
+            ]
+            heapq.heapify(refreshed)
+            self._heap = refreshed
+            _, _, task = heapq.heappop(self._heap)
             return task
 
     def size(self):
